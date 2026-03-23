@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # =========================================
-# 作者: noa1188
-# 修改: 2026.3
+# 作者: jinqians（原作者）
+# 修改: noa1188（自动获取最新版本 & 架构适配）
+# 日期: 2026年3月
 # 描述: 这个脚本用于安装、卸载、realm转发
 # =========================================
 
@@ -59,7 +60,7 @@ show_menu() {
 # 配置防火墙规则
 configure_firewall() {
     local port=$1
-    local action=$2  # "add" 或 "remove"
+    local action=$2 # "add" 或 "remove"
 
     # 检查是否安装了ufw
     if command -v ufw >/dev/null 2>&1; then
@@ -80,7 +81,7 @@ configure_firewall() {
     fi
 }
 
-# 部署环境的函数
+# 部署环境的函数（自动获取最新版本 + 自动识别架构）
 deploy_realm() {
     mkdir -p /root/realm
     cd /root/realm || exit 1
@@ -195,40 +196,6 @@ EOF
     echo "realm ${latest_tag} 安装完成（架构: ${arch}）。"
     echo "你可以在主菜单中启动/添加转发规则。"
 }
-    
-    # 创建配置文件
-    touch /root/realm/config.toml
-    
-    # 创建服务文件
-    cat > /etc/systemd/system/realm.service << EOF
-[Unit]
-Description=realm
-After=network-online.target
-Wants=network-online.target systemd-networkd-wait-online.service
-
-[Service]
-Type=simple
-User=root
-Restart=on-failure
-RestartSec=5s
-ExecStart=/root/realm/realm -c /root/realm/config.toml
-WorkingDirectory=/root/realm
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # 设置正确的权限
-    chmod 644 /etc/systemd/system/realm.service
-    
-    systemctl daemon-reload
-    systemctl enable realm.service
-    
-    # 更新realm状态变量
-    realm_status="已安装"
-    realm_status_color="\033[0;32m"
-    echo "部署完成。"
-}
 
 # 卸载realm
 uninstall_realm() {
@@ -240,7 +207,7 @@ uninstall_realm() {
     echo "realm已被卸载。"
     # 更新realm状态变量
     realm_status="未安装"
-    realm_status_color="\033[0;31m"
+    realm_status_color="\\033[0;31m"
 }
 
 # 添加转发规则
@@ -260,18 +227,18 @@ add_forward() {
         echo "[[endpoints]]
 listen = \"[::]:$port\"
 remote = \"$ip:$remote_port\"" >> /root/realm/config.toml
-        
+
         # 配置防火墙
         configure_firewall $port "add"
-        
+
         echo -e "${GREEN}已添加转发规则：本地端口 $port -> $ip:$remote_port${NC}"
-        
+
         read -p "是否继续添加(Y/N)? " answer
         if [[ $answer != "Y" && $answer != "y" ]]; then
             break
         fi
     done
-    
+
     # 重启realm服务以应用新配置
     restart_service
 }
@@ -291,13 +258,14 @@ delete_forward() {
     for line in "${lines[@]}"; do
         local port=$(echo $line | grep -o '[0-9]\+')
         port_map[$index]=$port
-        local remote_line=$(($(echo $line | cut -d':' -f1) + 1))
+        local line_number=$(echo $line | cut -d':' -f1)
+        local remote_line=$((line_number + 1))
         local remote=$(sed -n "${remote_line}p" /root/realm/config.toml | cut -d'"' -f2)
         echo "${index}. 本地端口 $port -> $remote"
         let index+=1
     done
 
-    read -p "请输入要删除的转发规则序号，直接按回车返回主菜单：" choice
+    read -p "请输入要删除的转发规则序号，直接按回车返回主菜单： " choice
     if [ -z "$choice" ]; then
         return
     fi
@@ -309,16 +277,16 @@ delete_forward() {
 
     # 获取要删除的端口
     local port_to_delete=${port_map[$choice]}
-    
+
     # 删除防火墙规则
     configure_firewall $port_to_delete "remove"
 
     # 删除配置文件中的规则
     local line_number=$(echo ${lines[$((choice-1))]} | cut -d':' -f1)
-    sed -i "$line_number,$(($line_number+1))d" /root/realm/config.toml
+    sed -i "${line_number},$((line_number+1))d" /root/realm/config.toml
 
     echo -e "${GREEN}已删除转发规则和对应的防火墙规则${NC}"
-    
+
     # 重启realm服务以应用新配置
     restart_service
 }
@@ -355,7 +323,7 @@ stop_service() {
 # 更新脚本函数
 update_script() {
     echo -e "${GREEN}检查更新...${NC}"
-    
+
     # 下载远程版本号
     remote_version=$(curl -s https://raw.githubusercontent.com/jinqians/realm/refs/heads/main/realm.sh | grep "^VERSION=" | cut -d'"' -f2)
     if [ $? -ne 0 ]; then
@@ -368,17 +336,17 @@ update_script() {
         echo -e "${GREEN}当前已是最新版本！${NC}"
         return 0
     fi
-    
+
     echo -e "${GREEN}发现新版本：${remote_version}${NC}"
     read -p "是否更新？(y/n) " choice
     if [[ "$choice" != "y" && "$choice" != "Y" ]]; then
         echo -e "${GREEN}已取消更新${NC}"
         return 0
     fi
-    
+
     # 下载新版本脚本
     wget -O /tmp/realm.sh https://raw.githubusercontent.com/jinqians/realm/refs/heads/main/realm.sh
-    
+
     if [ $? -eq 0 ]; then
         # 检查下载的文件是否存在且不为空
         if [ -s /tmp/realm.sh ]; then
