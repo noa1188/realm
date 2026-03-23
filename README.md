@@ -10,7 +10,7 @@
 
 ### 安装
 ```bahs
-wget https://raw.githubusercontent.com/jinqians/realm/refs/heads/main/realm.sh && chmod +x realm.sh && ./realm.sh
+wget https://github.com/noa1188/realm/raw/main/realm.sh && chmod +x realm.sh && ./realm.sh
 ```
 
 ## Realm 介绍
