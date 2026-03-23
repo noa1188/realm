@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # =========================================
-# 作者: jinqians
-# 日期: 2025年4月
-# 网站：jinqians.com
+# 作者: noa1188
+# 修改: 2026.3
 # 描述: 这个脚本用于安装、卸载、realm转发
 # =========================================
 
@@ -84,10 +83,118 @@ configure_firewall() {
 # 部署环境的函数
 deploy_realm() {
     mkdir -p /root/realm
-    cd /root/realm
-    wget -O realm.tar.gz https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-gnu.tar.gz
+    cd /root/realm || exit 1
+
+    # 安装依赖：curl + jq
+    if command -v apt >/dev/null 2>&1; then
+        apt update && apt install -y curl jq
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y curl jq
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y curl jq
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache curl jq
+    fi
+
+    echo "正在获取 realm 最新版本信息..."
+
+    # 1. 获取最新 release 信息
+    api_json=$(curl -fsSL https://api.github.com/repos/zhboner/realm/releases/latest)
+    if [ $? -ne 0 ] || [ -z "$api_json" ]; then
+        echo "获取最新版本信息失败，检查网络或 GitHub 访问。"
+        return 1
+    fi
+
+    latest_tag=$(echo "$api_json" | jq -r '.tag_name')
+    if [ -z "$latest_tag" ] || [ "$latest_tag" = "null" ]; then
+        echo "解析最新版本号失败。"
+        return 1
+    fi
+    echo "检测到 realm 最新版本: $latest_tag"
+
+    # 2. 检测本机架构，映射到对应的二进制名
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64)
+            asset_suffix="x86_64-unknown-linux-gnu.tar.gz"
+            ;;
+        aarch64|arm64)
+            asset_suffix="aarch64-unknown-linux-gnu.tar.gz"
+            ;;
+        armv7l|armv7)
+            asset_suffix="armv7-unknown-linux-gnueabihf.tar.gz"
+            ;;
+        *)
+            echo "未支持的架构: $arch，请手动查看 Release 中的文件名。"
+            return 1
+            ;;
+    esac
+
+    # 3. 从 assets 里找到对应架构的 tar.gz 下载链接
+    download_url=$(echo "$api_json" \
+        | jq -r ".assets[] | select(.name | endswith(\"$asset_suffix\")) | .browser_download_url")
+
+    if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
+        echo "在最新 Release 中找不到适用于架构 $arch 的安装包 (*$asset_suffix)。"
+        return 1
+    fi
+
+    echo "下载链接: $download_url"
+    echo "开始下载 realm..."
+
+    # 4. 下载并解压
+    rm -f realm.tar.gz
+    curl -L "$download_url" -o realm.tar.gz
+    if [ $? -ne 0 ] || [ ! -s realm.tar.gz ]; then
+        echo "下载 realm 失败或文件为空。"
+        return 1
+    fi
+
     tar -xvf realm.tar.gz
+    # 解压后一般会得到名为 realm 的二进制
+    if [ ! -f "realm" ]; then
+        echo "解压后未找到 realm 可执行文件，请检查压缩包结构。"
+        return 1
+    fi
+
     chmod +x realm
+
+    # 创建配置文件（如果不存在）
+    if [ ! -f /root/realm/config.toml ]; then
+        touch /root/realm/config.toml
+    fi
+
+    # 创建 systemd 服务文件
+    cat > /etc/systemd/system/realm.service << EOF
+[Unit]
+Description=realm
+After=network-online.target
+Wants=network-online.target systemd-networkd-wait-online.service
+
+[Service]
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
+ExecStart=/root/realm/realm -c /root/realm/config.toml
+WorkingDirectory=/root/realm
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    chmod 644 /etc/systemd/system/realm.service
+
+    systemctl daemon-reload
+    systemctl enable realm.service
+
+    # 更新realm状态变量
+    realm_status="已安装"
+    realm_status_color="\\033[0;32m"
+
+    echo "realm ${latest_tag} 安装完成（架构: ${arch}）。"
+    echo "你可以在主菜单中启动/添加转发规则。"
+}
     
     # 创建配置文件
     touch /root/realm/config.toml
